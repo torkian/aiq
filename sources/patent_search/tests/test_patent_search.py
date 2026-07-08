@@ -60,6 +60,7 @@ class _FakeAsyncClient:
     def __init__(self, response=None, exc=None, **kwargs):
         self._response = response
         self._exc = exc
+        _FakeAsyncClient.last_call = {}  # reset shared capture between tests
 
     async def __aenter__(self):
         return self
@@ -149,3 +150,29 @@ async def test_network_error_degrades_gracefully():
     with _patch_client(exc=httpx.ConnectError("no route")):
         out = await client.search("q")
     assert out == "Patent search failed: unable to reach PatentsView."
+
+
+@pytest.mark.asyncio
+async def test_malformed_json_degrades_gracefully():
+    """A body that isn't valid JSON returns the malformed-response error."""
+
+    class _BadJson(_FakeResponse):
+        def json(self):
+            raise json.JSONDecodeError("bad", "", 0)
+
+    client = PatentSearchClient(api_key="k")
+    with _patch_client(response=_BadJson(200, {})):
+        out = await client.search("q")
+    assert out == "Patent search failed: PatentsView returned a malformed response."
+
+
+@pytest.mark.asyncio
+async def test_unexpected_json_shape_is_handled():
+    """A non-dict payload or non-dict items don't crash; they yield no results."""
+    client = PatentSearchClient(api_key="k")
+    # Top-level list instead of the documented {"patents": [...]} object.
+    with _patch_client(response=_FakeResponse(payload=["unexpected"])):
+        assert await client.search("q") == "Patent search failed: PatentsView returned a malformed response."
+    # patents present but containing a non-dict entry.
+    with _patch_client(response=_FakeResponse(payload={"patents": ["nope"]})):
+        assert await client.search("q") == "No patents found for query: q"

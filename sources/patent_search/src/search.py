@@ -98,11 +98,20 @@ class PatentSearchClient:
         except json.JSONDecodeError:
             return "Patent search failed: PatentsView returned a malformed response."
 
-        return self.format_results(data.get("patents") or [], query)
+        # Guard against an unexpected JSON shape (e.g. a top-level list) before
+        # treating the payload as the documented {"patents": [...]} object.
+        if not isinstance(data, dict):
+            return "Patent search failed: PatentsView returned a malformed response."
+        patents = data.get("patents")
+        if not isinstance(patents, list):
+            patents = []
+        return self.format_results(patents, query)
 
     @staticmethod
     def format_results(patents: list[dict[str, Any]], query: str) -> str:
         """Format PatentsView results into a numbered, citable string."""
+        # Skip any non-dict entries defensively (unexpected item shapes).
+        patents = [p for p in patents if isinstance(p, dict)]
         if not patents:
             return f"No patents found for query: {query}"
 
