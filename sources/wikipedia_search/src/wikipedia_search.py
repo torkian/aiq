@@ -21,7 +21,9 @@ return page titles, plain-text intro extracts, and canonical URLs. Network and
 parse failures degrade to a readable error string rather than raising.
 """
 
+import json
 import logging
+import sys
 from typing import Any
 from urllib.parse import quote
 
@@ -92,14 +94,29 @@ class WikipediaSearchTool:
         except aiohttp.ClientError as exc:
             logger.warning("Wikipedia search request failed: %s", exc)
             return "Wikipedia search failed: unable to reach Wikipedia."
+        except (json.JSONDecodeError, ValueError) as exc:
+            # A 200 with a non-JSON / malformed body reaches here via .json().
+            logger.warning("Wikipedia response could not be parsed: %s", exc)
+            return "Wikipedia search failed: Wikipedia returned a malformed response."
 
         return self.format_results(self._parse(data))
 
-    def _parse(self, data: dict[str, Any]) -> list[dict[str, Any]]:
-        """Extract normalized article dicts from a MediaWiki query response."""
-        pages = ((data or {}).get("query") or {}).get("pages") or {}
+    def _parse(self, data: Any) -> list[dict[str, Any]]:
+        """Extract normalized article dicts from a MediaWiki query response.
+
+        Defensive against unexpected shapes: any level that is not the expected
+        dict yields no articles rather than raising.
+        """
+        if not isinstance(data, dict):
+            return []
+        query = data.get("query")
+        pages = query.get("pages") if isinstance(query, dict) else None
+        if not isinstance(pages, dict):
+            return []
         articles = []
         for page in pages.values():
+            if not isinstance(page, dict):
+                continue
             extract = " ".join((page.get("extract") or "").split())
             if self.max_content_length is not None and len(extract) > self.max_content_length:
                 extract = extract[: self.max_content_length].rstrip() + "…"
@@ -108,19 +125,24 @@ class WikipediaSearchTool:
                     "title": page.get("title", "Untitled"),
                     "extract": extract,
                     "url": page.get("fullurl") or self._title_url(page.get("title", "")),
-                    "index": page.get("index", 0),
+                    # Missing ranks sort last (MediaWiki search 'index' is 1-based).
+                    "index": page.get("index", sys.maxsize),
                 }
             )
         # MediaWiki returns pages keyed by id; 'index' preserves search rank.
         articles.sort(key=lambda a: a["index"])
         return articles
 
-    @staticmethod
-    def _title_url(title: str) -> str:
-        """Build a canonical Wikipedia URL from a page title."""
+    def _title_url(self, title: str) -> str:
+        """Build a canonical article URL from a page title, honoring api_url.
+
+        Derives the wiki base from the configured MediaWiki endpoint so the
+        fallback URL is correct for non-English / self-hosted wikis too.
+        """
         if not title:
             return ""
-        return "https://en.wikipedia.org/wiki/" + quote(title.replace(" ", "_"))
+        base = self.api_url.split("/w/api.php")[0].rstrip("/")
+        return f"{base}/wiki/" + quote(title.replace(" ", "_"))
 
     @staticmethod
     def format_results(articles: list[dict[str, Any]]) -> str:

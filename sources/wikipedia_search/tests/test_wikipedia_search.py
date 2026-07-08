@@ -99,11 +99,18 @@ async def test_query_sends_search_generator_params():
     tool = WikipediaSearchTool(max_results=3)
     with _patch_session(session=session):
         await tool.search("neural networks")
-    params = session.requested_params
-    assert params["generator"] == "search"
-    assert params["gsrsearch"] == "neural networks"
-    assert params["gsrlimit"] == "3"
-    assert params["explaintext"] == "1"
+    assert session.requested_params == {
+        "action": "query",
+        "format": "json",
+        "generator": "search",
+        "gsrsearch": "neural networks",
+        "gsrlimit": "3",
+        "prop": "extracts|info",
+        "exintro": "1",
+        "explaintext": "1",
+        "inprop": "url",
+        "redirects": "1",
+    }
 
 
 @pytest.mark.asyncio
@@ -136,6 +143,41 @@ async def test_http_error_degrades_gracefully():
     with _patch_session(response=_FakeResponse(500, None)):
         out = await tool.search("q")
     assert out == "Wikipedia search failed: returned HTTP 500."
+
+
+@pytest.mark.asyncio
+async def test_malformed_json_degrades_gracefully():
+    """A 200 whose body isn't valid JSON returns the malformed-response error."""
+    import json
+
+    class _BadJson(_FakeResponse):
+        async def json(self):
+            raise json.JSONDecodeError("bad", "", 0)
+
+    tool = WikipediaSearchTool()
+    with _patch_session(response=_BadJson(200, None)):
+        out = await tool.search("q")
+    assert out == "Wikipedia search failed: Wikipedia returned a malformed response."
+
+
+@pytest.mark.asyncio
+async def test_client_error_degrades_gracefully():
+    """A transport-level ClientError is reported, not raised."""
+    import aiohttp
+
+    tool = WikipediaSearchTool()
+    with _patch_session(exc=aiohttp.ClientConnectionError("down")):
+        out = await tool.search("q")
+    assert out == "Wikipedia search failed: unable to reach Wikipedia."
+
+
+@pytest.mark.asyncio
+async def test_unexpected_json_shape_yields_no_results():
+    """A well-formed-but-unexpected JSON shape (e.g. a list) doesn't crash."""
+    tool = WikipediaSearchTool()
+    for shape in ([], {"query": []}, {"query": {"pages": "nope"}}):
+        with _patch_session(response=_FakeResponse(200, shape)):
+            assert await tool.search("q") == "No Wikipedia articles found."
 
 
 @pytest.mark.asyncio
