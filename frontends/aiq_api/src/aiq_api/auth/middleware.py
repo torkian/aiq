@@ -115,6 +115,27 @@ from .utils import is_headless_request
 
 logger = logging.getLogger(__name__)
 
+# Specificity ranking for auth failure codes. When several validators reject a
+# token, the most specific (actionable) code wins regardless of validator order:
+# an expired token should surface "token_expired" (so the client can refresh)
+# even if a later validator only knows to say the generic "token_invalid".
+_ERROR_CODE_SPECIFICITY = {
+    "token_expired": 2,
+    "token_invalid": 1,
+}
+
+
+def _more_specific_error(current: str | None, candidate: str | None) -> str | None:
+    """Return whichever error code is more specific (higher ranked)."""
+    if candidate is None:
+        return current
+    if current is None:
+        return candidate
+    if _ERROR_CODE_SPECIFICITY.get(candidate, 0) > _ERROR_CODE_SPECIFICITY.get(current, 0):
+        return candidate
+    return current
+
+
 # Backwards-compatible aliases for tests and internal helper imports.
 _build_pseudonymous_trace_user_id = auth_utils._build_pseudonymous_trace_user_id
 _build_pseudonymous_trace_client_id = auth_utils._build_pseudonymous_trace_client_id
@@ -240,8 +261,14 @@ def extract_auth_token(headers: dict[bytes, bytes]) -> str | None:
 
 
 async def validate_token_with_error(token: str, validators: list) -> tuple[dict[str, Any] | None, str | None]:
-    """Try validators in order and preserve the most specific auth failure code."""
-    last_error: str | None = "token_invalid"
+    """Try validators in order and preserve the most specific auth failure code.
+
+    A token may be offered to several validators (any JWT-shaped token is
+    ``can_handle``-able by every JWT validator). Rather than letting the last
+    validator's verdict win, keep the most specific failure code seen, so the
+    result is independent of validator ordering.
+    """
+    best_error: str | None = None
     for validator in validators:
         if validator.can_handle(token):
             has_error_validator = "validate_with_error" in getattr(validator, "__dict__", {}) or hasattr(
@@ -261,10 +288,9 @@ async def validate_token_with_error(token: str, validators: list) -> tuple[dict[
                     user, error_code = result, None if result is not None else "token_invalid"
             if user is not None:
                 return (user, None)
-            if error_code:
-                last_error = error_code
+            best_error = _more_specific_error(best_error, error_code)
     logger.debug("Token rejected by all %d configured validator(s)", len(validators))
-    return (None, last_error)
+    return (None, best_error or "token_invalid")
 
 
 async def validate_token_with_validators(token: str, validators: list) -> dict[str, Any] | None:

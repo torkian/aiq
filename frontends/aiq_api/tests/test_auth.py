@@ -1127,3 +1127,68 @@ class TestMiddlewareErrorCodes:
         assert body["error"] == "token_expired"
         assert body["detail"] == "Token has expired"
         assert messages[0]["status"] == 401
+
+
+# ---------------------------------------------------------------------------
+# validate_token_with_error — most-specific-code selection (order-independent)
+# ---------------------------------------------------------------------------
+
+
+class _StubValidator:
+    """Minimal TokenValidator stub returning a fixed (user, error_code)."""
+
+    def __init__(self, user, error_code):
+        self._user = user
+        self._error_code = error_code
+
+    def can_handle(self, token: str) -> bool:
+        """Every stub handles any token (mirrors JWT can_handle breadth)."""
+        return True
+
+    def validate_with_error(self, token: str):
+        """Return the canned verdict for this stub."""
+        return (self._user, self._error_code)
+
+
+class TestValidateTokenWithErrorSpecificity:
+    """The most specific auth failure code must win regardless of order."""
+
+    @pytest.mark.asyncio
+    async def test_expired_beats_invalid_regardless_of_order(self):
+        """An expired-then-invalid sequence reports token_expired either way."""
+        expired = _StubValidator(None, "token_expired")
+        invalid = _StubValidator(None, "token_invalid")
+
+        user_a, err_a = await middleware_module.validate_token_with_error("t", [expired, invalid])
+        user_b, err_b = await middleware_module.validate_token_with_error("t", [invalid, expired])
+
+        assert user_a is None and user_b is None
+        assert err_a == "token_expired"
+        assert err_b == "token_expired", "order must not change the reported code"
+
+    @pytest.mark.asyncio
+    async def test_first_successful_validator_short_circuits(self):
+        """A validator that authenticates the user wins immediately, no error."""
+        ok = _StubValidator({"sub": "u1"}, None)
+        invalid = _StubValidator(None, "token_invalid")
+
+        user, err = await middleware_module.validate_token_with_error("t", [invalid, ok])
+        assert user == {"sub": "u1"}
+        assert err is None
+
+    @pytest.mark.asyncio
+    async def test_all_invalid_reports_invalid(self):
+        """When every validator only says invalid, the result is token_invalid."""
+        v1 = _StubValidator(None, "token_invalid")
+        v2 = _StubValidator(None, "token_invalid")
+
+        user, err = await middleware_module.validate_token_with_error("t", [v1, v2])
+        assert user is None
+        assert err == "token_invalid"
+
+    @pytest.mark.asyncio
+    async def test_no_validators_defaults_to_invalid(self):
+        """No validators at all falls back to the generic token_invalid."""
+        user, err = await middleware_module.validate_token_with_error("t", [])
+        assert user is None
+        assert err == "token_invalid"
