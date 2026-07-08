@@ -63,8 +63,13 @@ functions:
         tools:
           - web_search_tool
           - advanced_web_search_tool
+      - id: academic_papers
+        name: "Academic Papers (arXiv)"
+        description: "Search arXiv for scientific preprints and papers. No API key required."
+        tools:
+          - arxiv_paper_search_tool
       # - id: paper_search
-      #   name: "Academic Papers"
+      #   name: "Academic Papers (Google Scholar)"
       #   description: "Search academic papers and scientific publications."
       #   tools:
       #     - paper_search_tool
@@ -78,6 +83,12 @@ functions:
     _type: tavily_web_search
     max_results: 2
     advanced_search: true
+
+  # Academic paper search via arXiv (no API key required).
+  arxiv_paper_search_tool:
+    _type: arxiv_paper_search
+    max_results: 5
+    max_content_length: 1000
 
   # Paper Search (optional - requires SERPER_API_KEY)
   # Uncomment the block below and set SERPER_API_KEY to enable academic paper search.

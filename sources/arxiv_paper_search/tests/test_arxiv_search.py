@@ -58,6 +58,7 @@ class _FakeSession:
     def __init__(self, response=None, exc=None):
         self._response = response
         self._exc = exc
+        self.requested_url: str | None = None
 
     async def __aenter__(self):
         return self
@@ -67,6 +68,7 @@ class _FakeSession:
 
     def get(self, url):
         session = self
+        session.requested_url = url
 
         @asynccontextmanager
         async def _cm():
@@ -77,12 +79,34 @@ class _FakeSession:
         return _cm()
 
 
-def _patch_session(**kwargs):
+def _patch_session(session: _FakeSession | None = None, **kwargs):
     """Patch aiohttp.ClientSession in the tool module with a fake session."""
+    fake = session if session is not None else _FakeSession(**kwargs)
     return patch(
         "arxiv_paper_search.arxiv_search.aiohttp.ClientSession",
-        return_value=_FakeSession(**kwargs),
+        return_value=fake,
     )
+
+
+@pytest.mark.asyncio
+async def test_request_targets_the_arxiv_api_contract():
+    """The tool must call the arXiv API endpoint with the documented params."""
+    from urllib.parse import parse_qs
+    from urllib.parse import urlparse
+
+    session = _FakeSession(response=_FakeResponse(200, _EMPTY_FEED))
+    tool = ArxivSearchTool(max_results=7)
+    with _patch_session(session=session):
+        await tool.search("graph neural networks")
+
+    parsed = urlparse(session.requested_url)
+    assert parsed.scheme == "https"
+    assert parsed.netloc == "export.arxiv.org"
+    assert parsed.path == "/api/query"
+    params = parse_qs(parsed.query)
+    assert params["search_query"] == ["all:graph neural networks"]
+    assert params["max_results"] == ["7"]
+    assert params["sortBy"] == ["relevance"]
 
 
 @pytest.mark.asyncio

@@ -94,7 +94,8 @@ class ArxivSearchTool:
                     return f"Paper search failed: arXiv returned HTTP {response.status}."
                 body = await response.text()
         except TimeoutError:
-            return f"Paper search timed out after {self.timeout}s. Try again or narrow the query."
+            # Prefixed "Paper search failed" so _search_with_retries retries it.
+            return f"Paper search failed: timed out after {self.timeout}s. Try again or narrow the query."
         except aiohttp.ClientError as exc:
             logger.warning("arXiv search request failed: %s", exc)
             return "Paper search failed: unable to reach arXiv."
