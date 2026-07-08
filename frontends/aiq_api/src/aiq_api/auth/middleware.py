@@ -119,10 +119,21 @@ logger = logging.getLogger(__name__)
 # token, the most specific (actionable) code wins regardless of validator order:
 # an expired token should surface "token_expired" (so the client can refresh)
 # even if a later validator only knows to say the generic "token_invalid".
+#
+# Validators may return provider-specific codes (base.TokenValidator allows any
+# string). An unknown code is treated as MORE specific than the generic
+# "token_invalid" but less specific than the actionable "token_expired", so a
+# late generic rejection can't mask a provider's specific reason.
 _ERROR_CODE_SPECIFICITY = {
-    "token_expired": 2,
+    "token_expired": 3,
     "token_invalid": 1,
 }
+_UNKNOWN_CODE_RANK = 2
+
+
+def _error_code_rank(code: str) -> int:
+    """Rank an auth failure code by specificity (higher = more specific)."""
+    return _ERROR_CODE_SPECIFICITY.get(code, _UNKNOWN_CODE_RANK)
 
 
 def _more_specific_error(current: str | None, candidate: str | None) -> str | None:
@@ -131,7 +142,7 @@ def _more_specific_error(current: str | None, candidate: str | None) -> str | No
         return current
     if current is None:
         return candidate
-    if _ERROR_CODE_SPECIFICITY.get(candidate, 0) > _ERROR_CODE_SPECIFICITY.get(current, 0):
+    if _error_code_rank(candidate) > _error_code_rank(current):
         return candidate
     return current
 

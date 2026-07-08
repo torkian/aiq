@@ -1187,6 +1187,25 @@ class TestValidateTokenWithErrorSpecificity:
         assert err == "token_invalid"
 
     @pytest.mark.asyncio
+    async def test_custom_code_beats_generic_invalid_regardless_of_order(self):
+        """A provider-specific code outranks the generic token_invalid, order-free."""
+        custom = _StubValidator(None, "tenant_mismatch")
+        invalid = _StubValidator(None, "token_invalid")
+
+        _, err_a = await middleware_module.validate_token_with_error("t", [custom, invalid])
+        _, err_b = await middleware_module.validate_token_with_error("t", [invalid, custom])
+        assert err_a == "tenant_mismatch"
+        assert err_b == "tenant_mismatch"
+
+    @pytest.mark.asyncio
+    async def test_expired_still_beats_custom_code(self):
+        """token_expired remains the most specific (actionable) code."""
+        expired = _StubValidator(None, "token_expired")
+        custom = _StubValidator(None, "tenant_mismatch")
+        _, err = await middleware_module.validate_token_with_error("t", [expired, custom])
+        assert err == "token_expired"
+
+    @pytest.mark.asyncio
     async def test_no_validators_defaults_to_invalid(self):
         """No validators at all falls back to the generic token_invalid."""
         user, err = await middleware_module.validate_token_with_error("t", [])
