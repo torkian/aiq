@@ -200,6 +200,7 @@ dev = [
     "dask[distributed]>=2024.1.0",
     # Workspace packages for testing
     "google-scholar-paper-search",
+    "patent-search",
     "tavily-web-search",
     "exa-web-search",
     "duckduckgo-news-search",
@@ -243,6 +244,7 @@ members = [
 [tool.uv.sources]
 aiq-agent = { workspace = true }
 google-scholar-paper-search = { workspace = true }
+patent-search = { workspace = true }
 tavily-web-search = { workspace = true }
 exa-web-search = { workspace = true }
 duckduckgo-news-search = { workspace = true }
