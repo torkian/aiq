@@ -187,3 +187,19 @@ async def test_retry_recovers_after_transient_failure():
         out = await _search_with_retries(tool, "q", max_retries=2)
     assert calls["n"] == 2
     assert out.startswith("1. **Paper**")
+
+
+@pytest.mark.asyncio
+async def test_non_transient_failure_is_not_retried():
+    """A malformed-response / HTTP error is not retried (won't fix itself)."""
+    tool = ArxivSearchTool()
+    calls = {"n": 0}
+
+    async def fake_search(query):
+        calls["n"] += 1
+        return "Paper search failed: arXiv returned a malformed response."
+
+    with patch.object(tool, "search", side_effect=fake_search), patch("arxiv_paper_search.arxiv_search.asyncio.sleep"):
+        out = await _search_with_retries(tool, "q", max_retries=3)
+    assert calls["n"] == 1  # no retries for a non-transient failure
+    assert "malformed" in out

@@ -151,7 +151,7 @@ class ArxivSearchTool:
             authors = paper.get("authors") or []
             author_str = ", ".join(authors[:3]) + (" et al." if len(authors) > 3 else "")
             formatted.append(
-                f"{i}. **{paper.get('title', 'Unknown Title')}** ({paper.get('year') or 'n.d.'})\n"
+                f"{i}. **{paper.get('title') or 'Unknown Title'}** ({paper.get('year') or 'n.d.'})\n"
                 f"   - **Authors**: {author_str or 'Unknown'}\n"
                 f"   - **Abstract**: {paper.get('summary', '')}\n"
                 f"   - **Link**: {paper.get('link', '')}"
@@ -159,12 +159,22 @@ class ArxivSearchTool:
         return "\n\n".join(formatted)
 
 
+# Only genuinely transient failures are worth retrying; a bad HTTP status or a
+# malformed response won't fix itself on a retry, so those return immediately.
+_TRANSIENT_MARKERS = ("timed out", "unable to reach")
+
+
+def _is_transient_failure(result: str) -> bool:
+    """True if the result is a retriable transient network failure."""
+    return any(marker in result for marker in _TRANSIENT_MARKERS)
+
+
 async def _search_with_retries(tool: ArxivSearchTool, query: str, max_retries: int) -> str:
-    """Call ``tool.search`` with simple linear backoff on transient failures."""
+    """Call ``tool.search`` with linear backoff on transient failures only."""
     attempt = 0
     while True:
         result = await tool.search(query)
-        if not result.startswith("Paper search failed") or attempt >= max_retries:
+        if not _is_transient_failure(result) or attempt >= max_retries:
             return result
         attempt += 1
         await asyncio.sleep(attempt)
